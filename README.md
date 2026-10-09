@@ -1,7 +1,5 @@
-# EmbeddedAI
-Using an FPGA and Raspberry pi to build a custom AI image recognizer in hardware.
-
-# Edge AI Video Inference Accelerator
+# EmbeddedAI - Edge AI Video Inference Accelerator
+Using an FPGA and Raspberry pi to build a custom AI image recognizer in hardware.  
 
 **Course:** Oakland University - CSI-4130/5130: Artificial Intelligence  
 **Author:** Roger Villanueva
