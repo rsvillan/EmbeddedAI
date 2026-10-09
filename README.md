@@ -20,7 +20,7 @@ This project develops an end-to-end hardware-accelerated inference pipeline brid
 ## Data Sources
 
 * **Live Inference Data:** Real-time video stream captured directly from the Raspberry Pi 4B MIPI camera module.
-* **Training Data:** [Insert Dataset Name, e.g., CIFAR-10, COCO, or a custom image dataset] used offline in PyTorch to train the model prior to hardware deployment.
+* **Training Data:** [Currently Unknown]
 
 ## Setup and Execution Instructions
 
