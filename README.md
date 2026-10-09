@@ -3,7 +3,7 @@ Using an FPGA and Raspberry pi to build a custom AI image recognizer in hardware
 
 # Edge AI Video Inference Accelerator
 
-**Course:** CSI-4130/5130: Artificial Intelligence (Oakland University)
+**Course:** Oakland University - CSI-4130/5130: Artificial Intelligence  
 **Author:** Roger Villanueva
 
 ## Problem Statement
