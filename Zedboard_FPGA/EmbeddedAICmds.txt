@@ -1,0 +1,35 @@
+NETWORKING:
+
+# 1. Bring down the interface or clear old IPs
+sudo ip addr flush dev enx000a35001e53
+
+# 2. Assign the correct IP (e.g., 192.168.10.2 with a 24-bit subnet mask)
+sudo ip addr add 192.168.10.2/24 dev enx000a35001e53
+
+# 3. Bring the interface back up
+sudo ip link set dev enx000a35001e53 up
+
+
+GET DATA FROM SD CARD:
+
+sudo cp /run/media/ZEDBOARD-mmcblk0p1/weights.bin .
+sudo cp /run/media/ZEDBOARD-mmcblk0p1/cpu_inference.c .
+
+sudo cp /run/media/ZEDBOARD-mmcblk0p1/AI_CoProcessor.c .
+sudo cp /run/media/ZEDBOARD-mmcblk0p1/AI_CoProcessor .
+
+GCC/COMPILE
+
+sudo gcc cpu_inference.c -o cpu_inference
+
+
+PETALINUX:
+
+# Hardware change
+    petalinux-config --get-hw-description /mnt/c/Vivado/EmbeddedAI/design_2_wrapper.xsa
+
+# Petalinux build
+petalinux-build
+
+# petalinux export boot for sdcard
+petalinux-package --boot --fsbl images/linux/zynq_fsbl.elf --fpga images/linux/system.bit --u-boot images/linux/u-boot.elf --output images/linux/BOOT.BIN --force
