@@ -14,7 +14,6 @@ GET DATA FROM SD CARD:
 
 sudo cp /run/media/ZEDBOARD-mmcblk0p1/weights.bin .
 sudo cp /run/media/ZEDBOARD-mmcblk0p1/cpu_inference.c .
-
 sudo cp /run/media/ZEDBOARD-mmcblk0p1/AI_CoProcessor.c .
 sudo cp /run/media/ZEDBOARD-mmcblk0p1/AI_CoProcessor .
 
@@ -33,3 +32,13 @@ petalinux-build
 
 # petalinux export boot for sdcard
 petalinux-package --boot --fsbl images/linux/zynq_fsbl.elf --fpga images/linux/system.bit --u-boot images/linux/u-boot.elf --output images/linux/BOOT.BIN --force
+
+
+MODEL TRAINING:
+
+conv1_weight: 67533.4714
+conv1_bias: 172635.9258
+conv2_weight: 37788.8109
+conv2_bias: 71145.1684
+fc_weight: 53516.1453
+fc_bias: 119941.5927
