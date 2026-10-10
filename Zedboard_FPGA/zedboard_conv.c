@@ -7,7 +7,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <sys/time.h> // Added for sub-second timing
+#include <sys/time.h> 
 
 #define DMA_BASE_ADDR   0x40400000 
 #define IP_BASE_ADDR    0x40000000 
@@ -88,7 +88,7 @@ int main(void) {
     int frame_count = 0;
     
     struct timeval last_print_time, current_time;
-    gettimeofday(&last_print_time, NULL); // Initialize timer
+    gettimeofday(&last_print_time, NULL); 
 
     while (1) {
         // Wait for a 2048-byte payload from the Raspberry Pi
@@ -102,8 +102,15 @@ int main(void) {
             // Reset and Trigger DMA
             dma[MM2S_DMACR] = 0x0004; dma[S2MM_DMACR] = 0x0004; usleep(100);
             
-            dma[S2MM_DMACR] = 0x0001; dma[S2MM_DA] = DST_PHYS_ADDR; dma[S2MM_LENGTH] = TRANSFER_BYTES * 2; 
-            dma[MM2S_DMACR] = 0x0001; dma[MM2S_SA] = SRC_PHYS_ADDR; dma[MM2S_LENGTH] = TRANSFER_BYTES * 2; 
+            // S2MM (Receiver): The Max Pooler reduced the 32x32 (1024) image to 16x16 (256)
+            dma[S2MM_DMACR] = 0x0001; 
+            dma[S2MM_DA] = DST_PHYS_ADDR; 
+            dma[S2MM_LENGTH] = (TRANSFER_BYTES / 4) * 2; 
+            
+            // MM2S (Transmitter): Still sending the full 32x32 image
+            dma[MM2S_DMACR] = 0x0001; 
+            dma[MM2S_SA] = SRC_PHYS_ADDR; 
+            dma[MM2S_LENGTH] = TRANSFER_BYTES * 2; 
 
             // Poll for completion
             int timeout = 100000;
@@ -114,7 +121,8 @@ int main(void) {
             int32_t class_scores[10] = {0};
             
             for (int neuron = 0; neuron < 10; neuron++) {
-                for (int pixel = 0; pixel < TRANSFER_WORDS; pixel++) {
+                // Loop updated to 256 (TRANSFER_WORDS / 4) to match the new 16x16 Max Pooled feature map
+                for (int pixel = 0; pixel < (TRANSFER_WORDS / 4); pixel++) {
                     class_scores[neuron] += (int16_t)dst[pixel] * cpu_fc_weights[neuron][pixel];
                 }
             }
@@ -135,10 +143,9 @@ int main(void) {
             double elapsed_seconds = (current_time.tv_sec - last_print_time.tv_sec) + 
                                      (current_time.tv_usec - last_print_time.tv_usec) / 1000000.0;
                                      
-            // Only print if 0.5 seconds have passed
             if (elapsed_seconds >= 0.5) {
                 printf("Processed Frame %d | Classification: %s\n", frame_count, cifar10_classes[best_class]);
-                last_print_time = current_time; // Reset the timer
+                last_print_time = current_time; 
             }
         }
     }

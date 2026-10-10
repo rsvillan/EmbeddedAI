@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 
 # --- Configuration ---
-PI_IP = "192.168.86.83" # REPLACE WITH PI'S IP ADDRESS
+PI_IP = "192.168.10.1"
 PORT = 8080
 
 # Connect to the Pi's TCP video stream using OpenCV's built-in network reader
