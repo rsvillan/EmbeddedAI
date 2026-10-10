@@ -1,2 +1,25 @@
 data/*
-Zedboard_FPGA/EmbeddedAI/*
+
+# Vivado auto-generated directories and files
+*.Xil/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+*.sdk/
+*.tmp/
+*.gen/
+.jou
+.log
+.str
+
+# Compiled binaries and bitstreams
+*.bit
+*.bin
+*.elf
+*.o
+
+# OS specific files
+.DS_Store
+Thumbs.db
