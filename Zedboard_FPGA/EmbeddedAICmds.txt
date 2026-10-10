@@ -12,10 +12,8 @@ sudo ip link set dev enx000a35001e53 up
 
 GET DATA FROM SD CARD:
 
-sudo cp /run/media/ZEDBOARD-mmcblk0p1/weights.bin .
-sudo cp /run/media/ZEDBOARD-mmcblk0p1/cpu_inference.c .
-sudo cp /run/media/ZEDBOARD-mmcblk0p1/AI_CoProcessor.c .
-sudo cp /run/media/ZEDBOARD-mmcblk0p1/AI_CoProcessor .
+sudo cp /run/media/ZEDBOARD-mmcblk0p1/conv1_weight.bin .
+sudo cp /run/media/ZEDBOARD-mmcblk0p1/fc_weight.bin .
 
 GCC/COMPILE
 
