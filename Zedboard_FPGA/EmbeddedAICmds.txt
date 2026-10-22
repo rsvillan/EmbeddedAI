@@ -12,8 +12,11 @@ sudo ip link set dev enx000a35001e53 up
 
 GET DATA FROM SD CARD:
 
-sudo cp /run/media/ZEDBOARD-mmcblk0p1/conv1_weight.bin .
-sudo cp /run/media/ZEDBOARD-mmcblk0p1/fc_weight.bin .
+sudo cp /run/media/ZEDBOARD-mmcblk0p1/fc1_w_int16.bin .
+sudo cp /run/media/ZEDBOARD-mmcblk0p1/fc1_b_int16.bin .
+sudo cp /run/media/ZEDBOARD-mmcblk0p1/fc2_b_int16.bin .
+sudo cp /run/media/ZEDBOARD-mmcblk0p1/fc2_w_int16.bin .
+
 
 GCC/COMPILE
 
@@ -23,7 +26,7 @@ sudo gcc cpu_inference.c -o cpu_inference
 PETALINUX:
 
 # Hardware change
-    petalinux-config --get-hw-description /mnt/c/Vivado/EmbeddedAI/design_2_wrapper.xsa
+petalinux-config --get-hw-description /mnt/c/Vivado/EmbeddedAI/design_3_wrapper.xsa
 
 # Petalinux build
 petalinux-build
@@ -34,9 +37,3 @@ petalinux-package --boot --fsbl images/linux/zynq_fsbl.elf --fpga images/linux/s
 
 MODEL TRAINING:
 
-conv1_weight: 67533.4714
-conv1_bias: 172635.9258
-conv2_weight: 37788.8109
-conv2_bias: 71145.1684
-fc_weight: 53516.1453
-fc_bias: 119941.5927

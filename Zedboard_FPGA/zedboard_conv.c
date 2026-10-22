@@ -1,159 +1,194 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <unistd.h>
 #include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <arpa/inet.h>
 #include <sys/socket.h>
-#include <netinet/in.h>
-#include <sys/time.h> 
+#include <sys/mman.h>
 
-#define DMA_BASE_ADDR   0x40400000 
-#define IP_BASE_ADDR    0x40000000 
-#define SRC_PHYS_ADDR   0x1E000000 
-#define DST_PHYS_ADDR   0x1E100000
+#define BIND_IP             "0.0.0.0"
+#define PORT                8080
 
-#define MM2S_DMACR      (0x00 / 4)
-#define MM2S_DMASR      (0x04 / 4)
-#define MM2S_SA         (0x18 / 4)
-#define MM2S_LENGTH     (0x28 / 4)
+#define IMG_PIXELS          784
+#define IN_DMA_BYTES        (784 * 2)           
+#define OUT_DMA_WORDS       (26 * 26 * 8) 
+#define OUT_DMA_BYTES       (OUT_DMA_WORDS * 2) 
 
-#define S2MM_DMACR      (0x30 / 4)
-#define S2MM_DMASR      (0x34 / 4)
-#define S2MM_DA         (0x48 / 4)
-#define S2MM_LENGTH     (0x58 / 4)
+#define FIXED_POINT_SHIFT   8
 
-#define TRANSFER_WORDS  1024
-#define TRANSFER_BYTES  (TRANSFER_WORDS * sizeof(uint16_t)) 
-#define UDP_PORT        8080
+#define AXI_DMA_BASE        0x40400000    
+#define DMA_REG_SPAN        0x10000
+#define TX_BUF_PADDR        0x1E000000
+#define RX_BUF_PADDR        0x1E100000
+#define BUF_SPAN            0x100000      
 
-const char* cifar10_classes[] = {
-    "Airplane", "Automobile", "Bird", "Cat", "Deer", 
-    "Dog", "Frog", "Horse", "Ship", "Truck"
-};
+#define MM2S_DMACR          0x00
+#define MM2S_DMASR          0x04
+#define MM2S_SA             0x18
+#define MM2S_LENGTH         0x28
 
-int main(void) {
-    // 1. Memory Mapping for DMA and Custom IP
-    int fd = open("/dev/mem", O_RDWR | O_SYNC);
-    if (fd < 0) {
-        perror("Failed to open /dev/mem");
-        return 1;
-    }
+#define S2MM_DMACR          0x30
+#define S2MM_DMASR          0x34
+#define S2MM_DA             0x48
+#define S2MM_LENGTH         0x58
 
-    volatile uint32_t *dma = (volatile uint32_t *)mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, DMA_BASE_ADDR);
-    volatile uint32_t *ip_ctrl = (volatile uint32_t *)mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, IP_BASE_ADDR);
-    volatile uint16_t *src = (volatile uint16_t *)mmap(NULL, 8192, PROT_READ | PROT_WRITE, MAP_SHARED, fd, SRC_PHYS_ADDR);
-    volatile uint16_t *dst = (volatile uint16_t *)mmap(NULL, 8192, PROT_READ | PROT_WRITE, MAP_SHARED, fd, DST_PHYS_ADDR);
+static int16_t FC1_WEIGHTS[32][1352];
+static int16_t FC1_BIAS[32];
+static int16_t FC2_WEIGHTS[10][32];
+static int16_t FC2_BIAS[10];
 
-    // 2. Load PyTorch Convolutional Weights (Hardware)
-    printf("Loading PyTorch weights (conv1_weight.bin)...\n");
-    FILE *weight_file = fopen("conv1_weight.bin", "rb");
-    if (weight_file) {
-        int16_t pytorch_weights[9];
-        fread(pytorch_weights, sizeof(int16_t), 9, weight_file);
-        fclose(weight_file);
-        for (int i = 0; i < 9; i++) { ip_ctrl[i] = pytorch_weights[i]; }
-    } else {
-        printf("Warning: conv1_weight.bin not found. Using empty weights.\n");
-    }
+static inline void dma_set(volatile uint32_t *dma, uint32_t offset, uint32_t val) { dma[offset >> 2] = val; }
+static inline uint32_t dma_get(volatile uint32_t *dma, uint32_t offset) { return dma[offset >> 2]; }
 
-    // 3. Load PyTorch Fully Connected Weights (Software/CPU)
-    printf("Loading FC weights (fc_weight.bin) to CPU memory...\n");
-    int16_t cpu_fc_weights[10][TRANSFER_WORDS] = {0};
-    FILE *fc_file = fopen("fc_weight.bin", "rb");
-    if (fc_file) {
-        fread(cpu_fc_weights, sizeof(int16_t), 10 * TRANSFER_WORDS, fc_file);
-        fclose(fc_file);
-    } else {
-        printf("Warning: fc_weight.bin not found. CPU will output zeros.\n");
-    }
+void print_dma_status(volatile uint32_t *dma) {
+    uint32_t mm2s = dma_get(dma, MM2S_DMASR);
+    uint32_t s2mm = dma_get(dma, S2MM_DMASR);
+    printf("  [DMA] MM2S: 0x%08X | S2MM: 0x%08X\n", mm2s, s2mm);
+}
 
-    // 4. Setup UDP Socket
-    int sockfd;
-    struct sockaddr_in server_addr, client_addr;
-    socklen_t client_len = sizeof(client_addr);
-    
-    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(UDP_PORT);
-    
-    bind(sockfd, (const struct sockaddr *)&server_addr, sizeof(server_addr));
-    printf("Listening for UDP frames on port %d...\n", UDP_PORT);
+void dma_reset(volatile uint32_t *dma) {
+    dma_set(dma, MM2S_DMACR, 0x4);
+    dma_set(dma, S2MM_DMACR, 0x4);
+    while (dma_get(dma, MM2S_DMACR) & 0x4);
+    while (dma_get(dma, S2MM_DMACR) & 0x4);
+}
 
-    // 5. Main Inference Loop Variables
-    uint16_t recv_buffer[TRANSFER_WORDS];
-    int frame_count = 0;
-    
-    struct timeval last_print_time, current_time;
-    gettimeofday(&last_print_time, NULL); 
+int load_fc_weights(const char *dir) {
+    char path[256]; FILE *f;
+    snprintf(path, sizeof(path), "%s/fc1_w_int16.bin", dir);
+    if (!(f = fopen(path, "rb"))) return -1; fread(FC1_WEIGHTS, 2, 32 * 1352, f); fclose(f);
+    snprintf(path, sizeof(path), "%s/fc1_b_int16.bin", dir);
+    if (!(f = fopen(path, "rb"))) return -1; fread(FC1_BIAS, 2, 32, f); fclose(f);
+    snprintf(path, sizeof(path), "%s/fc2_w_int16.bin", dir);
+    if (!(f = fopen(path, "rb"))) return -1; fread(FC2_WEIGHTS, 2, 10 * 32, f); fclose(f);
+    snprintf(path, sizeof(path), "%s/fc2_b_int16.bin", dir);
+    if (!(f = fopen(path, "rb"))) return -1; fread(FC2_BIAS, 2, 10, f); fclose(f);
+    return 0;
+}
 
-    while (1) {
-        // Wait for a 2048-byte payload from the Raspberry Pi
-        int n = recvfrom(sockfd, recv_buffer, TRANSFER_BYTES, 0, (struct sockaddr *)&client_addr, &client_len);
-        if (n == TRANSFER_BYTES) {
-            frame_count++;
-            
-            // Copy network payload directly to DMA source memory
-            memcpy((void*)src, recv_buffer, TRANSFER_BYTES);
-
-            // Reset and Trigger DMA
-            dma[MM2S_DMACR] = 0x0004; dma[S2MM_DMACR] = 0x0004; usleep(100);
-            
-            // S2MM (Receiver): The Max Pooler reduced the 32x32 (1024) image to 16x16 (256)
-            dma[S2MM_DMACR] = 0x0001; 
-            dma[S2MM_DA] = DST_PHYS_ADDR; 
-            dma[S2MM_LENGTH] = (TRANSFER_BYTES / 4) * 2; 
-            
-            // MM2S (Transmitter): Still sending the full 32x32 image
-            dma[MM2S_DMACR] = 0x0001; 
-            dma[MM2S_SA] = SRC_PHYS_ADDR; 
-            dma[MM2S_LENGTH] = TRANSFER_BYTES * 2; 
-
-            // Poll for completion
-            int timeout = 100000;
-            while (!(dma[MM2S_DMASR] & 0x0002) && --timeout > 0);
-            while (!(dma[S2MM_DMASR] & 0x0002) && --timeout > 0);
-
-            // --- ARM CPU: Fully Connected Layer ---
-            int32_t class_scores[10] = {0};
-            
-            for (int neuron = 0; neuron < 10; neuron++) {
-                // Loop updated to 256 (TRANSFER_WORDS / 4) to match the new 16x16 Max Pooled feature map
-                for (int pixel = 0; pixel < (TRANSFER_WORDS / 4); pixel++) {
-                    class_scores[neuron] += (int16_t)dst[pixel] * cpu_fc_weights[neuron][pixel];
-                }
-            }
-
-            // --- Classification Argmax ---
-            int best_class = 0;
-            int32_t max_score = -2147483648; 
-            
-            for (int i = 0; i < 10; i++) {
-                if (class_scores[i] > max_score) {
-                    max_score = class_scores[i];
-                    best_class = i;
-                }
-            }
-
-            // --- Time-Gated Print Logic ---
-            gettimeofday(&current_time, NULL);
-            double elapsed_seconds = (current_time.tv_sec - last_print_time.tv_sec) + 
-                                     (current_time.tv_usec - last_print_time.tv_usec) / 1000000.0;
-                                     
-            if (elapsed_seconds >= 0.5) {
-                printf("Processed Frame %d | Classification: %s\n", frame_count, cifar10_classes[best_class]);
-                last_print_time = current_time; 
+int run_arm_classifier(const int16_t *conv_features) {
+    static int16_t relu_conv[8][26][26];
+    int idx = 0;
+    for (int r = 0; r < 26; r++) {
+        for (int c = 0; c < 26; c++) {
+            for (int f = 0; f < 8; f++) {
+                int16_t val = conv_features[idx++];
+                relu_conv[f][r][c] = (val > 0) ? val : 0;
             }
         }
     }
 
-    munmap((void *)dma, 4096); 
-    munmap((void *)ip_ctrl, 4096);
-    munmap((void *)src, 8192); 
-    munmap((void *)dst, 8192);
-    close(fd);
-    return 0;
+    static int16_t pool_out[1352];
+    int p_idx = 0;
+    for (int f = 0; f < 8; f++) {
+        for (int r = 0; r < 26; r += 2) {
+            for (int c = 0; c < 26; c += 2) {
+                int16_t m = relu_conv[f][r][c];
+                if (relu_conv[f][r+1][c] > m) m = relu_conv[f][r+1][c];
+                if (relu_conv[f][r][c+1] > m) m = relu_conv[f][r][c+1];
+                if (relu_conv[f][r+1][c+1] > m) m = relu_conv[f][r+1][c+1];
+                pool_out[p_idx++] = m;
+            }
+        }
+    }
+
+    static int32_t fc1_out[32];
+    for (int i = 0; i < 32; i++) {
+        int64_t acc = 0;
+        for (int j = 0; j < 1352; j++) {
+            acc += (int32_t)pool_out[j] * FC1_WEIGHTS[i][j];
+        }
+        acc = (acc >> FIXED_POINT_SHIFT) + FC1_BIAS[i];
+        fc1_out[i] = (acc > 0) ? (int32_t)(acc >> FIXED_POINT_SHIFT) : 0;
+    }
+
+    int32_t best_logit = -2147483647;
+    int predicted_digit = -1;
+    
+    printf("Raw Logits: ");
+    for (int i = 0; i < 10; i++) {
+        int64_t acc = 0;
+        for (int j = 0; j < 32; j++) acc += fc1_out[j] * FC2_WEIGHTS[i][j];
+        acc = (acc >> FIXED_POINT_SHIFT) + FC2_BIAS[i];
+        
+        printf("[%d]:%d ", i, (int)acc);
+        
+        if (acc > best_logit) { best_logit = acc; predicted_digit = i; }
+    }
+    printf("\n");
+    return predicted_digit;
+}
+
+int main(void) {
+    int dev_mem = open("/dev/mem", O_RDWR | O_SYNC);
+    if (dev_mem < 0) return EXIT_FAILURE;
+
+    volatile uint32_t *dma = (uint32_t *)mmap(NULL, DMA_REG_SPAN, PROT_READ | PROT_WRITE, MAP_SHARED, dev_mem, AXI_DMA_BASE);
+    volatile int16_t *tx_buf = (volatile int16_t *)mmap(NULL, BUF_SPAN, PROT_READ | PROT_WRITE, MAP_SHARED, dev_mem, TX_BUF_PADDR);
+    volatile int16_t *rx_buf = (volatile int16_t *)mmap(NULL, BUF_SPAN, PROT_READ | PROT_WRITE, MAP_SHARED, dev_mem, RX_BUF_PADDR);
+
+    if (load_fc_weights(".") != 0) {
+        printf("[FATAL] Missing binary weight files.\n"); return EXIT_FAILURE;
+    }
+
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    int opt = 1; setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    struct sockaddr_in servaddr;
+    memset(&servaddr, 0, sizeof(servaddr));
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_port = htons(PORT);
+    inet_pton(AF_INET, BIND_IP, &servaddr.sin_addr);
+    bind(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr));
+
+    dma_reset(dma);
+    uint8_t raw_pixel_frame[IMG_PIXELS];
+    
+    printf("[READY] ZedBoard CNN Pipeline armed.\n\n");
+
+    while (1) {
+        ssize_t len = recvfrom(sockfd, raw_pixel_frame, sizeof(raw_pixel_frame), 0, NULL, NULL);
+        if (len != IMG_PIXELS) continue;
+
+        for (int i = 0; i < IMG_PIXELS; i++) {
+            tx_buf[i] = (int16_t)(((uint16_t)raw_pixel_frame[i] * 256) / 255);
+        }
+
+        __sync_synchronize();
+
+        dma_set(dma, S2MM_DMACR, 0x01);
+        dma_set(dma, S2MM_DA, RX_BUF_PADDR);
+        dma_set(dma, S2MM_LENGTH, OUT_DMA_BYTES);
+
+        dma_set(dma, MM2S_DMACR, 0x01);
+        dma_set(dma, MM2S_SA, TX_BUF_PADDR);
+        dma_set(dma, MM2S_LENGTH, IN_DMA_BYTES);
+
+        int timeout_tx = 10000000;
+        while (!(dma_get(dma, MM2S_DMASR) & 0x02) && --timeout_tx);
+        if (timeout_tx == 0) {
+            printf("\n[TIMEOUT] MM2S stalled! Resetting DMA...\n");
+            dma_reset(dma);
+            continue;
+        }
+
+        int timeout_rx = 10000000;
+        while (!(dma_get(dma, S2MM_DMASR) & 0x02) && --timeout_rx);
+        if (timeout_rx == 0) {
+            printf("\n[WARN] S2MM missing TKEEP/TLAST. Force-reading DDR...\n");
+            dma_reset(dma); 
+            // Intentionally no 'continue' here so it extracts features anyway
+        }
+
+        __sync_synchronize();
+        int prediction = run_arm_classifier((const int16_t *)rx_buf);
+        printf("========================================\n");
+        printf("[RESULT] Detected Digit: >>> %d <<<\n", prediction);
+        printf("========================================\n\n");
+    }
+
+    close(sockfd);
+    close(dev_mem);
+    return EXIT_SUCCESS;
 }
