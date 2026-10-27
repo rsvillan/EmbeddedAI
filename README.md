@@ -20,7 +20,7 @@ This project develops an end-to-end hardware-accelerated inference pipeline brid
 ## Data Sources
 
 * **Live Inference Data:** Real-time video stream captured directly from the Raspberry Pi 4B MIPI camera module.
-* **Training Data:** [Currently Unknown]
+* **Training Data:** MNIST Standard Dataset
 
 ## Setup and Execution Instructions
 
